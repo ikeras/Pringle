@@ -3,8 +3,8 @@ import sys
 import pygame
 from pygame.locals import *
 import numpy as np
-from cpu import CPU
-import time
+from emulator import Emulator
+import threading
 
 class Chip:
     pygame_keys_to_chip8_keys = {
@@ -31,7 +31,7 @@ class Chip:
         pygame.K_v: 0xf
     }
     
-    def _create_display(self, height, width):
+    def _create_display(self, width, height ):
         self.display_height = height
         self.display_width = width
         self.screen = pygame.display.set_mode((width * 10, height * 10))
@@ -42,57 +42,42 @@ class Chip:
         parser.add_argument('rom', help='ROM (ch8) file to load - full path')
         parser.add_argument('-s', '--speed', help='Number of operations to emulate per second', default=700, type=int)
         args = parser.parse_args()
-                
-        memory = np.zeros(4 * 1024, dtype=np.uint8)
-        rom = np.fromfile(args.rom, dtype=np.uint8)
-        memory[0x200:0x200 + len(rom)] = rom
         
-        cpu = CPU(memory)
-        instructions_per_second = args.speed
-        
+        emulator = Emulator()
+        emulator.load_rom(args.rom)
+        self.emulation_thread = threading.Thread(target=emulator.start_or_continue, args=(args.speed,))
+            
         pygame.init()
         pygame.display.set_caption("Pringle Chip-8 emulator")
-        self._create_display(cpu.display_height, cpu.display_width)
+        width, height = emulator.get_display_size()
+        self._create_display(width, height)
         
         fps = pygame.time.Clock()
         
-        start_time = pygame.time.get_ticks()
-        # instructions per second
-        for i in range(instructions_per_second):
-            cpu.execute_next_instruction()
-        
-            if (cpu.display_height != self.display_height or cpu.display_width != self.display_width):
-                self._create_display(cpu.display_height, cpu.display_width)
-        
-        end_time = pygame.time.get_ticks()
-        delay_time = (end_time - start_time) // instructions_per_second
-            
+        self.emulation_thread.start()
+                    
         while True:
-            # instructions per second
-            for i in range(instructions_per_second):
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT:
-                        pygame.quit()
-                        sys.exit()
-                    elif event.type == pygame.KEYDOWN:
-                        if Chip.pygame_keys_to_chip8_keys.get(event.key) is not None:
-                            cpu.press_key(Chip.pygame_keys_to_chip8_keys[event.key])    
-                    elif event.type == pygame.KEYUP:
-                        if Chip.pygame_keys_to_chip8_keys.get(event.key) is not None:
-                            cpu.release_key(Chip.pygame_keys_to_chip8_keys[event.key])
-            
-                cpu.execute_next_instruction()
-            
-                if (cpu.display_height != self.display_height or cpu.display_width != self.display_width):
-                    self._create_display(cpu.display_height, cpu.display_width)
-                
-                pygame.time.delay(delay_time)
-                
-            pygame.surfarray.blit_array(self.buffer, cpu.display)
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    emulator.stop()
+                    pygame.quit()
+                    sys.exit()
+                elif event.type == pygame.KEYDOWN:
+                    if Chip.pygame_keys_to_chip8_keys.get(event.key) is not None:
+                        emulator.press_key(Chip.pygame_keys_to_chip8_keys[event.key])    
+                elif event.type == pygame.KEYUP:
+                    if Chip.pygame_keys_to_chip8_keys.get(event.key) is not None:
+                        emulator.release_key(Chip.pygame_keys_to_chip8_keys[event.key])
+                        
+            width, height = emulator.get_display_size()
+            if (height != self.display_height or width != self.display_width):
+                self._create_display(width, height)
+                            
+            pygame.surfarray.blit_array(self.buffer, emulator.get_display())
             pygame.transform.scale(self.buffer, (self.display_width * 10, self.display_height * 10), self.screen)
             pygame.display.update()
             
-            cpu.tick()
+            emulator.tick()
             fps.tick(60)
         
 chip = Chip()

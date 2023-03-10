@@ -1,5 +1,6 @@
 import numpy as np
 from collections import deque
+from threading import Lock
 
 class CPU:
     _small_font_height = 5
@@ -47,6 +48,7 @@ class CPU:
     
     def __init__(self, memory):
         self._memory = memory
+        self._key_lock = Lock()
         self._keys = np.full(16, False)
         self._persisted_registers = np.zeros(16, dtype=np.uint8)
         self._registers = np.zeros(16, dtype=np.uint8)
@@ -58,9 +60,8 @@ class CPU:
         self._i = 0
         self._pc = 0x200
         
-        self.display_height = 32
-        self.display_width = 64
-        self.display = np.zeros((self.display_width, self.display_height), dtype=np.uint32)
+        self._display_lock = Lock()
+        self._create_display(64, 32)
         
         self._memory[CPU._small_font_memory_offset:CPU._small_font_memory_offset + len(self._small_font)] = self._small_font
         self._memory[CPU._large_font_memory_offset:CPU._large_font_memory_offset + len(self._large_font)] = self._large_font
@@ -80,7 +81,7 @@ class CPU:
         
         if instruction == 0x0:
             if nnn == 0x0e0:
-                self.display.fill(0)
+                self._display.fill(0)
             elif nnn >= 0x00c0 and nnn <= 0x00cf:
                 self._scroll_display_down(n)
             elif nnn == 0x0ee:
@@ -153,19 +154,22 @@ class CPU:
             self._draw_sprite(x, y, n)
         elif instruction == 0xe:
             if kk == 0x9e:
-                if self._keys[self._registers[x]]:
-                    self._pc += 2
+                with self._key_lock:
+                    if self._keys[self._registers[x]]:
+                        self._pc += 2
             elif kk == 0xa1:
-                if not self._keys[self._registers[x]]:
-                    self._pc += 2
+                with self._key_lock:
+                    if not self._keys[self._registers[x]]:
+                        self._pc += 2
         elif instruction == 0xf:
             if kk == 0x07:
                 self._registers[x] = self._delay_timer
             elif kk == 0x0a:
-                if self._number_of_keys_pressed > 0:
-                    self._registers[x] = self._last_key_pressed
-                else:
-                    self._pc -= 2
+                with self._key_lock:
+                    if self._number_of_keys_pressed > 0:
+                        self._registers[x] = self._last_key_pressed
+                    else:
+                        self._pc -= 2
             elif kk == 0x15:
                 self._delay_timer = self._registers[x]
             elif kk == 0x18:
@@ -197,16 +201,26 @@ class CPU:
         else:
             raise IndexError("Unknown instruction")
 
+    def get_display(self):
+        with self._display_lock:
+            return np.copy(self._display)
+
+    def get_display_size(self):
+        with self._display_lock:
+            return self._display_width, self._display_height
+
     def press_key(self, key):
-        if not self._keys[key]:
-            self._keys[key] = True
-            self._number_of_keys_pressed += 1
-            self._last_key_pressed = key
+        with self._key_lock:
+            if not self._keys[key]:
+                self._keys[key] = True
+                self._number_of_keys_pressed += 1
+                self._last_key_pressed = key
     
     def release_key(self, key):
-        if self._keys[key]:
-            self._keys[key] = False
-            self._number_of_keys_pressed -= 1
+        with self._key_lock:
+            if self._keys[key]:
+                self._keys[key] = False
+                self._number_of_keys_pressed -= 1
     
     def tick(self):
         if (self._delay_timer > 0):
@@ -216,53 +230,61 @@ class CPU:
             self._sound_timer -= 1
     
     def _create_display(self, width, height):
-        self.display = np.zeros((width, height), dtype=np.uint32)
-        self.display_height = height
-        self.display_width = width
+        with self._display_lock:
+            self._display = np.zeros((width, height), dtype=np.uint32)
+            self._display_height = height
+            self._display_width = width
     
     def _draw_sprite(self, x, y, n):
-        xStart = self._registers[x] % self.display_width
-        yOffset = self._registers[y] % self.display_height
+        xStart = self._registers[x] % self._display_width
+        yOffset = self._registers[y] % self._display_height
         self._registers[0xf] = 0
         
         spriteWidth = 16 if n == 0 else 8
         spriteHeight = 16 if n == 0 else n
         
-        for row in range(spriteHeight):
-            spriteRowData = \
-                self._memory[self._i + (row * 2)] << 8 | self._memory[self._i + (row * 2) + 1] if n == 0 else \
-                self._memory[self._i + row]
-            
-            xOffset = xStart
-            
-            for bit in range(spriteWidth):
-                spriteBit = (spriteRowData >> (spriteWidth - bit - 1)) & 0x1
-                pixel = self.display[(xOffset, yOffset)]
+        with self._display_lock:
+            for row in range(spriteHeight):
+                spriteRowData = \
+                    self._memory[self._i + (row * 2)] << 8 | self._memory[self._i + (row * 2) + 1] if n == 0 else \
+                    self._memory[self._i + row]
                 
-                if spriteBit > 0:
-                    if pixel != 0:
-                        pixel = 0
-                        self._registers[0xf] = 1
-                    else:
-                        pixel = 0xffffffff
+                xOffset = xStart
                 
-                self.display[(xOffset, yOffset)] = pixel
+                for bit in range(spriteWidth):
+                    spriteBit = (spriteRowData >> (spriteWidth - bit - 1)) & 0x1
+                    pixel = self._display[(xOffset, yOffset)]
+                    
+                    if spriteBit > 0:
+                        if pixel != 0:
+                            pixel = 0
+                            self._registers[0xf] = 1
+                        else:
+                            pixel = 0xffffffff
+                    
+                    self._display[(xOffset, yOffset)] = pixel
+                    
+                    xOffset += 1
+                    
+                    if xOffset >= self._display_width:
+                        break
                 
-                xOffset += 1
+                yOffset += 1
                 
-                if xOffset >= self.display_width:
+                if yOffset >= self._display_height:
                     break
-            
-            yOffset += 1
-            
-            if yOffset >= self.display_height:
-                break
                     
     def _scroll_display_down(self, rows):
-        self.display = np.roll(self.display, -rows, axis=0)
+        with self._display_lock:
+            np.copyto(self._display[:, rows:], self._display[:, :-rows])
+            self._display[:, :rows] = np.zeros((self._display_width, rows), dtype=np.uint32)
     
-    def _scroll_display_right(self, columns):
-        self.display = np.roll(self.display, -columns, axis=1)
+    def _scroll_display_right(self):
+        with self._display_lock:
+            np.copyto(self._display[:-4, :], self._display[4:, :])
+            self._display[-4:, :] = np.zeros((4, self._display_height), dtype=np.uint32)
     
-    def _scroll_display_left(self, columns):
-        self.display = np.roll(self.display, columns, axis=1)
+    def _scroll_display_left(self):
+        with self._display_lock:
+            np.copyto(self._display[4:, :], self._display[:-4, :])
+            self._display[:4, :] = np.zeros((4, self._display_height), dtype=np.uint32)
