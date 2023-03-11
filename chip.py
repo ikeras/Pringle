@@ -69,6 +69,7 @@ class Chip:
                     if Chip.pygame_keys_to_chip8_keys.get(event.key) is not None:
                         emulator.release_key(Chip.pygame_keys_to_chip8_keys[event.key])
                         
+            # Chip-8 display can be resized at runtime
             width, height = emulator.get_display_size()
             if (height != self.display_height or width != self.display_width):
                 self._create_display(width, height)

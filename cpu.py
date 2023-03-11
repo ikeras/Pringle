@@ -67,6 +67,7 @@ class CPU:
         self._memory[CPU._large_font_memory_offset:CPU._large_font_memory_offset + len(self._large_font)] = self._large_font
         
     def execute_next_instruction(self):
+        """Execute the next instruction in memory. This method performs most of the calculations inline to avoid the overhead of function calls."""
         hi_instruction = self._memory[self._pc]
         lo_instruction = self._memory[self._pc + 1]
         self._pc += 2
@@ -202,10 +203,12 @@ class CPU:
             raise IndexError("Unknown instruction")
 
     def get_display(self):
+        """Returns a copy of the display to avoid multithreading issues"""
         with self._display_lock:
             return np.copy(self._display)
 
     def get_display_size(self):
+        """Returns the size of the display as a tuple (width, height)"""
         with self._display_lock:
             return self._display_width, self._display_height
 
@@ -223,6 +226,7 @@ class CPU:
                 self._number_of_keys_pressed -= 1
     
     def tick(self):
+        """Should be called at a rate of 60Hz"""
         if (self._delay_timer > 0):
             self._delay_timer -= 1
         
@@ -236,6 +240,7 @@ class CPU:
             self._display_width = width
     
     def _draw_sprite(self, x, y, n):
+        """Draws a sprite at the given coordinates and stores the result in the display"""
         xStart = self._registers[x] % self._display_width
         yOffset = self._registers[y] % self._display_height
         self._registers[0xf] = 0

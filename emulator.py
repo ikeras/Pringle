@@ -28,6 +28,7 @@ class Emulator:
         self._cpu.tick()
     
     def start_or_continue(self, instructions_per_second):
+        """Starts or continues execution of the program. Intended to be called from a separate thread."""
         self._is_executing = True
         
         delay_time = self.get_delay_between_instructions(instructions_per_second)
@@ -39,6 +40,7 @@ class Emulator:
             self._cpu.execute_next_instruction()
     
     def get_delay_between_instructions(self, instructions_per_second):
+        """Returns the delay between instructions in fractional seconds."""
         start_time = time.perf_counter()
         
         # instructions per second
